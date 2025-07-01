@@ -11,7 +11,13 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use((req, res, next) => {
+   if (req.originalUrl === "/webhook") {
+     next(); // ne pas parser JSON ici
+   } else {
+     express.json()(req, res, next); // parser JSON ailleurs
+   }
+ });
 
 const PORT = process.env.PORT || 3000;
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -48,7 +54,7 @@ app.post("/generate", async (req, res) => {
 
     if (!user) {
       console.log("➕ Nouvel utilisateur, insertion en base...");
-      await db.run("INSERT INTO users (userId, email, credits) VALUES (?, ?, ?)", userId, '', 5);
+      await db.run("INSERT INTO users (userId, email, credits) VALUES (?, ?, ?)", userId, '', 0);
       user = await db.get("SELECT * FROM users WHERE userId = ?", userId);
     }
 
