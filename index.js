@@ -48,7 +48,7 @@ app.post("/generate", async (req, res) => {
 
     if (!user) {
       console.log("➕ Nouvel utilisateur, insertion en base...");
-      await db.run("INSERT INTO users (userId, email, credits) VALUES (?, ?, ?)", userId, '', 0);
+      await db.run("INSERT INTO users (userId, email, credits) VALUES (?, ?, ?)", userId, '', 5);
       user = await db.get("SELECT * FROM users WHERE userId = ?", userId);
     }
 
