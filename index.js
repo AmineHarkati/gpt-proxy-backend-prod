@@ -178,6 +178,28 @@ app.get("/user/credits", async (req, res) => {
   }
 });
 
+
+app.post("/recover", async (req, res) => {
+  const { email, newUserId } = req.body;
+
+  if (!email || !newUserId) {
+    return res.status(400).json({ error: "Email et nouvel userId requis." });
+  }
+
+  const existingUser = await db.get("SELECT * FROM users WHERE email = ?", email);
+
+  if (!existingUser) {
+    return res.status(404).json({ error: "Aucun compte trouvé avec cet email." });
+  }
+
+  // ✅ Mise à jour du userId dans la base
+  await db.run("UPDATE users SET userId = ? WHERE email = ?", newUserId, email);
+
+  console.log(`🔁 userId mis à jour pour ${email} -> ${newUserId}`);
+
+  res.json({ success: true, message: "Crédits récupérés avec succès." });
+});
+
 app.listen(PORT, () => {
   console.log(`✅ API GPT proxy en ligne sur port ${PORT}`);
 });
