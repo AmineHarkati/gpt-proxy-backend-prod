@@ -103,7 +103,6 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-
 // 🔁 Lancement du paiement Stripe
 app.get("/payment/start", async (req, res) => {
   const { userId, email } = req.query;
@@ -129,6 +128,7 @@ app.get("/payment/start", async (req, res) => {
       success_url: `https://auto-comment-extension.vercel.app/success?userId=${userId}`,
       cancel_url: `https://auto-comment-extension.vercel.app/cancel`,
       metadata: { userId },
+      customer_email: email
     });
 
     res.json({ url: session.url });
@@ -153,10 +153,14 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const userId = session.metadata?.userId;
+    const email = session.customer_details?.email || "";
 
     if (userId) {
-      await pool.query("UPDATE users SET credits = credits + 50 WHERE userId = $1", [userId]);
-      console.log(`🎉 Paiement validé - 50 crédits ajoutés pour ${userId}`);
+      await pool.query(
+        "INSERT INTO users (userId, email, credits) VALUES ($1, $2, $3) ON CONFLICT(userId) DO UPDATE SET credits = users.credits + 50, email = excluded.email",
+        [userId, email, 50]
+      );
+      console.log(`🎉 Paiement validé - 50 crédits ajoutés pour ${userId}, email : ${email}`);
     }
   }
 
@@ -178,7 +182,6 @@ app.get("/user/credits", async (req, res) => {
     res.status(500).json({ error: "Erreur serveur." });
   }
 });
-
 
 app.post("/recover", async (req, res) => {
   const { email, newUserId } = req.body;
