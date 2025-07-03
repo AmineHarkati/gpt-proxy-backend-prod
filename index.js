@@ -3,8 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import fetch from "node-fetch";
 import Stripe from "stripe";
-import sqlite3 from "sqlite3";
-import { open } from "sqlite";
+import { Pool } from "pg";
 import bodyParser from "body-parser";
 
 dotenv.config();
@@ -17,24 +16,23 @@ app.use((req, res, next) => {
    } else {
      express.json()(req, res, next); // parser JSON ailleurs
    }
- });
+});
 
 const PORT = process.env.PORT || 3000;
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ✅ Connexion SQLite
-let db;
-(async () => {
-  db = await open({
-    filename: './users.db',
-    driver: sqlite3.Database
-  });
+// ✅ Connexion PostgreSQL
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
-  await db.run(`CREATE TABLE IF NOT EXISTS users (
+(async () => {
+  await pool.query(`CREATE TABLE IF NOT EXISTS users (
     userId TEXT PRIMARY KEY,
     email TEXT,
     credits INTEGER DEFAULT 0
-  )`);
+  );`);
 })();
 
 // ✅ Génération de commentaire avec suivi crédits
@@ -49,13 +47,15 @@ app.post("/generate", async (req, res) => {
   }
 
   try {
-    let user = await db.get("SELECT * FROM users WHERE userId = ?", userId);
+    const result = await pool.query("SELECT * FROM users WHERE userId = $1", [userId]);
+    let user = result.rows[0];
     console.log("👤 Utilisateur récupéré :", user);
 
     if (!user) {
       console.log("➕ Nouvel utilisateur, insertion en base...");
-      await db.run("INSERT INTO users (userId, email, credits) VALUES (?, ?, ?)", userId, '', 5);
-      user = await db.get("SELECT * FROM users WHERE userId = ?", userId);
+      await pool.query("INSERT INTO users (userId, email, credits) VALUES ($1, $2, $3)", [userId, '', 5]);
+      const newUserResult = await pool.query("SELECT * FROM users WHERE userId = $1", [userId]);
+      user = newUserResult.rows[0];
     }
 
     const credits = user?.credits ?? 0;
@@ -93,7 +93,7 @@ app.post("/generate", async (req, res) => {
       return res.status(500).json({ error: "Réponse vide ou invalide de GPT." });
     }
 
-    await db.run("UPDATE users SET credits = credits - 1 WHERE userId = ?", userId);
+    await pool.query("UPDATE users SET credits = credits - 1 WHERE userId = $1", [userId]);
     console.log(`✅ Crédit décrémenté pour ${userId}`);
 
     res.json({ comment });
@@ -112,7 +112,7 @@ app.get("/payment/start", async (req, res) => {
     return res.status(400).json({ error: "userId et email requis." });
   }
 
-  await db.run("INSERT OR IGNORE INTO users (userId, email, credits) VALUES (?, ?, 0)", userId, email);
+  await pool.query("INSERT INTO users (userId, email, credits) VALUES ($1, $2, $3) ON CONFLICT (userId) DO NOTHING", [userId, email, 0]);
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -155,7 +155,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
     const userId = session.metadata?.userId;
 
     if (userId) {
-      await db.run("UPDATE users SET credits = credits + 50 WHERE userId = ?", userId);
+      await pool.query("UPDATE users SET credits = credits + 50 WHERE userId = $1", [userId]);
       console.log(`🎉 Paiement validé - 50 crédits ajoutés pour ${userId}`);
     }
   }
@@ -169,7 +169,8 @@ app.get("/user/credits", async (req, res) => {
   if (!userId) return res.status(400).json({ error: "userId requis." });
 
   try {
-    const user = await db.get("SELECT credits FROM users WHERE userId = ?", userId);
+    const result = await pool.query("SELECT credits FROM users WHERE userId = $1", [userId]);
+    const user = result.rows[0];
     const credits = user?.credits ?? 0;
     res.json({ credits });
   } catch (e) {
@@ -186,15 +187,14 @@ app.post("/recover", async (req, res) => {
     return res.status(400).json({ error: "Email et nouvel userId requis." });
   }
 
-  const existingUser = await db.get("SELECT * FROM users WHERE email = ?", email);
+  const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+  const existingUser = result.rows[0];
 
   if (!existingUser) {
     return res.status(404).json({ error: "Aucun compte trouvé avec cet email." });
   }
 
-  // ✅ Mise à jour du userId dans la base
-  await db.run("UPDATE users SET userId = ? WHERE email = ?", newUserId, email);
-
+  await pool.query("UPDATE users SET userId = $1 WHERE email = $2", [newUserId, email]);
   console.log(`🔁 userId mis à jour pour ${email} -> ${newUserId}`);
 
   res.json({ success: true, message: "Crédits récupérés avec succès." });
