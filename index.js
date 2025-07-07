@@ -190,18 +190,37 @@ app.post("/recover", async (req, res) => {
     return res.status(400).json({ error: "Email et nouvel userId requis." });
   }
 
-  const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-  const existingUser = result.rows[0];
+  try {
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    const existingUser = result.rows[0];
 
-  if (!existingUser) {
-    return res.status(404).json({ error: "Aucun compte trouvé avec cet email." });
+    if (!existingUser) {
+      return res.status(404).json({ error: "Aucun compte trouvé avec cet email." });
+    }
+
+    // ✅ Vérifie si le userId est déjà utilisé pour un autre compte
+    const idCheck = await pool.query("SELECT * FROM users WHERE userId = $1", [newUserId]);
+    const userIdExists = idCheck.rows[0];
+
+    if (userIdExists && userIdExists.email !== email) {
+      return res.status(409).json({ error: "Ce userId est déjà utilisé par un autre compte." });
+    }
+
+    // ✅ Met à jour uniquement si l'userId est différent
+    if (existingUser.userId !== newUserId) {
+      await pool.query("UPDATE users SET userId = $1 WHERE email = $2", [newUserId, email]);
+      console.log(`🔁 userId mis à jour pour ${email} -> ${newUserId}`);
+    } else {
+      console.log(`ℹ️ userId déjà associé à ${email}, aucune mise à jour nécessaire.`);
+    }
+
+    res.json({ success: true, message: "Crédits récupérés avec succès." });
+  } catch (error) {
+    console.error("❌ Erreur dans /recover :", error);
+    res.status(500).json({ error: "Erreur serveur pendant la récupération." });
   }
-
-  await pool.query("UPDATE users SET userId = $1 WHERE email = $2", [newUserId, email]);
-  console.log(`🔁 userId mis à jour pour ${email} -> ${newUserId}`);
-
-  res.json({ success: true, message: "Crédits récupérés avec succès." });
 });
+
 
 app.listen(PORT, () => {
   console.log(`✅ API GPT proxy en ligne sur port ${PORT}`);
